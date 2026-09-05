@@ -1,0 +1,19 @@
++------------------------------------+-------------------------------------------+-----------------------------------------------+
+| Potential Attack Vector           | Vulnerability Mechanism                   | KraftWerk Program Safeguard                   |
++------------------------------------+-------------------------------------------+-----------------------------------------------+
+| 1. Telemetry Spoofing / Sybil      | Fake edge devices feeding fabricated      | Strict PDA seed pinning (Owner + GridNode).   |
+|    Injections                      | energy generation to harvest EUROe.       | Hardware-bound Ed25519 Pubkey registered.     |
++------------------------------------+-------------------------------------------+-----------------------------------------------+
+| 2. Reentrancy on Vault Settlement  | Malicious receiver calling back into      | State commitment pattern:                     |
+|                                    | `settle_balancing_round` during CPI.      | `device.accumulated_unsettled_mwh = 0` BEFORE |
+|                                    |                                           | the token CPI is performed.                   |
++------------------------------------+-------------------------------------------+-----------------------------------------------+
+| 3. Rounding & Precision Attacks    | Sub-cent truncation exploited over        | 1e6 fixed-point scaling factor (`FIXED_        |
+|                                    | millions of micro-transactions.           | PRECISION`) preventing precision erosion.     |
++------------------------------------+-------------------------------------------+-----------------------------------------------+
+| 4. PDA Bump Seed Hijacking         | Unchecked bump derivations allowing       | Enforced canonical bump seeds via Anchor's    |
+|                                    | spoofed program authority.                | `find_program_address` & strict bump storage. |
++------------------------------------+-------------------------------------------+-----------------------------------------------+
+| 5. Clock Drift / Replay Exploit    | Replaying past telemetry proofs from      | Timestamp checked strictly against runtime    |
+|                                    | periods of hyper-profitable pricing.      | `Clock::get()?.unix_timestamp` (+-300 sec).   |
++------------------------------------+-------------------------------------------+-----------------------------------------------+

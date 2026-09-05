@@ -1,0 +1,47 @@
+flowchart TD
+    subgraph Edge_Devices["Edge Hardware Layer (Germany §14a EnWG Inverters & SMGW)"]
+        SMGW["Smart Meter Gateway / Inverter<br/>(Secure Enclave Ed25519)"]
+        PV["Rooftop Solar PV / Battery Storage"]
+        SMGW -->|1. Sign Telemetry (kWh, Freq, Timestamp)| PV
+    end
+
+    subgraph Solana_Runtime["Solana Cluster (Devnet / Mainnet-Beta)"]
+        subgraph Accounts_Layer["Account State & PDAs"]
+            GridNode["Grid Node PDA<br/>seeds=['grid-node', node_id]<br/>• Nominal Freq: 50.00 Hz<br/>• Balancing Pool Reserves"]
+            DeviceRegistry["Device PDA<br/>seeds=['device', owner_pubkey]<br/>• Stake Balance<br/>• Cumulative kWh Injected<br/>• Device Pubkey & Status"]
+            BalanceVault["Balancing Collateral Vault PDA<br/>seeds=['vault', node_id]"]
+            TokenMint["Euro-Stable SPL Token<br/>(e.g., EUROe / EURC)"]
+        end
+
+        subgraph KraftWerk_Engine["KraftWerk Program Engine (Anchor)"]
+            InitNode["initialize_grid_node()"]
+            RegisterDev["register_device()"]
+            CommitTelemetry["commit_energy_telemetry()"]
+            SettleClearing["settle_balancing_round()"]
+            SlashMalicious["slash_deviant_device()"]
+        end
+
+        subgraph CPI_Boundary["Cross-Program Invocation (CPI)"]
+            SPL_Token_Prog["SPL Token Program<br/>(Token2022 / Standard)"]
+            Ed25519_Verify["Ed25519 Precompile Instruction<br/>Native Sysvar Verification"]
+        end
+    end
+
+    subgraph Keepers_Aggregators["Oracles & Aggregators Layer"]
+        TSO_Relay["TSO / Aggregator Keeper Node<br/>(Reads 50Hertz/TenneT Telemetry)"]
+    end
+
+    %% Interactions
+    SMGW -->|2. Send Signed Telemetry Transaction| Solana_Runtime
+    Solana_Runtime -->|Instruction 1| Ed25519_Verify
+    Ed25519_Verify -->|Sig OK| CommitTelemetry
+    CommitTelemetry -->|Update State| DeviceRegistry
+
+    TSO_Relay -->|3. Trigger Balancing Batch Settlement| SettleClearing
+    SettleClearing -->|Read Frequency Offset| GridNode
+    SettleClearing -->|Transfer EUROe Rewards| CPI_Boundary
+    CPI_Boundary -->|CPI Transfer| BalanceVault
+    BalanceVault -->|Payout| DeviceRegistry
+
+    SettleClearing -.->|Triggered if Injection < Promised| SlashMalicious
+    SlashMalicious -->|Slash Collateral| BalanceVault
