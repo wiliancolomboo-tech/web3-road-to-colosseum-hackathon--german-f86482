@@ -1,0 +1,10 @@
+kraftwerk/
+├── Anchor.toml
+├── Cargo.toml
+├── programs/
+│   └── kraftwerk/
+│       ├── Cargo.toml
+│       └── src/
+│           └── lib.rs
+└── tests/
+    └── kraftwerk.ts

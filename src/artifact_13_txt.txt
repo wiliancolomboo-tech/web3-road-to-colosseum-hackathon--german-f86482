@@ -1,0 +1,8 @@
+[Output Confirmation]
+Transaction executed successfully:
+Program Kest7k7mUaFz3rV4Wn3K4YfLzXQn8aM2JvF3uV9Cda1 invoke [1]
+Program log: Instruction: SettleMarket
+Program log: Market settled at clearing price: 35000000
+Program data: MarketSettledEvent { ... }
+Program Kest7k7mUaFz3rV4Wn3K4YfLzXQn8aM2JvF3uV9Cda1 consumed 8240 of 200000 compute units
+Program Kest7k7mUaFz3rV4Wn3K4YfLzXQn8aM2JvF3uV9Cda1 success

@@ -1,0 +1,24 @@
+[0:00 - 0:20] THE HOOK & THE INSTITUTIONAL BOTTLENECK
+(Visual: Split screen. On the left, a traditional German industrial invoice stamped "Payment Terms: 90 Days Net" with a red rejected stamp. On the right, a terminal showing instantaneous Solana confirmation times: 400ms.)
+Speaker: 
+"Germany is Europe’s industrial powerhouse, yet over 400 billion euros in SME trade receivables remain frozen in banking clearance queues. Under MiCA, anonymous DeFi protocols are legally unusable for European capital. Enter SolKredit: the first MiCA-compliant, dual-tranche debt financing primitive natively engineered on Solana Token Extensions."
+
+[0:20 - 0:45] ARCHITECTURE & TOKEN EXTENSIONS DEEP-DIVE
+(Visual: Live architecture walkthrough showing Token-2022 Transfer Hooks intercepting a simulated transfer, verifying the KYC PDA, and routing into Senior and Junior tranches.)
+Speaker: 
+"SolKredit solves the compliance paradox at the protocol level. By utilizing Token-2022 Transfer Hooks, every transfer verifies an on-chain BaFin/MiCA compliance passport. No non-whitelisted actor can hold or interact with SolKredit commercial notes. Capital is syndicated into Senior Tranches, offering risk-averse institutions yield protected by an underwriter-backed Junior first-loss buffer."
+
+[0:45 - 1:20] LIVE TERMINAL DEMO: ORIGINATION, DRAWDOWN & REPAYMENT
+(Visual: Terminal screen executing Anchor tests in real time. Demonstrating instantaneous collateralization, sub-second drawdown, and fixed-point interest calculations.)
+Speaker: 
+"Here, a German mid-market supplier tokenizes a €200,000 corporate receivable. The protocol calculates a 20% risk haircut, locking the collateral. Within 400 milliseconds, €150,000 in digital Euros (EURC) is drawn down from the Senior Vault directly into the supplier’s operating account. Yield accrues on-chain with 18-decimal Ray precision, eliminating fractional rounding bugs."
+
+[1:20 - 1:45] LIQUIDATION ENGINE & DEFAULT MITIGATION
+(Visual: Visual timeline displaying default transition. The 24-hour Dutch Auction triggers automatically, demonstrating liquidator buyout.)
+Speaker: 
+"If an invoice exceeds maturity, SolKredit eliminates bad-debt contagion through an automated Dutch auction. Liquidators bid in real-time to acquire the discounted claim. If any deficit occurs, it is instantly absorbed by the Junior first-loss capital, keeping institutional senior lenders 100% whole."
+
+[1:45 - 2:00] WHY SOLKREDIT WINS 1ST PLACE AT THE GERMANY IDEATHON
+(Visual: Metric dashboard showing €1.8B pipeline readiness, total addressable market stats, and roadmap leading to the Colosseum global circuit.)
+Speaker: 
+"SolKredit is not another synthetic toy. It is production-ready institutional credit infrastructure connecting the German Mittelstand directly to Solana’s sub-second liquidity layer. We are SolKredit—and we are taking European finance on-chain."

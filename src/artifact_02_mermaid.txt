@@ -1,0 +1,52 @@
+flowchart TD
+    subgraph Enterprise ["Enterprise Layer (German Mittelstand)"]
+        Supplier["Enterprise Creditor / Supplier\n(German Exporter)"]
+        Debtor["Enterprise Debtor\n(B2B Customer)"]
+        Investor["Institutional Liquidity Provider\n(Euro Yield Fund)"]
+    end
+
+    subgraph Security ["Compliance & Access Control"]
+        Registry["MiCA Enterprise Compliance Registry\n[PDA: 'registry', authority]"]
+        TransferHook["Token-2022 Transfer Hook Program\n[PDA: 'transfer_hook', mint]"]
+    end
+
+    subgraph Core ["KREIS Core Engine (Anchor Program)"]
+        Pool["Revolving Liquidity Pool\n[PDA: 'liquidity_pool', euro_mint]\n- total_deposits: u64\n- total_borrowed: u64\n- base_rate_bps: u16\n- jump_rate_bps: u16\n- last_accrual_ts: i64"]
+        
+        InvoicePDA["Tokenized Invoice Vault Account\n[PDA: 'invoice', pool, invoice_id]\n- nominal_value: u64\n- discounted_advance: u64\n- maturity_ts: i64\n- status: Active | Settled | Liquidated"]
+
+        MathEngine["Q64.64 Continuous\nJump-Rate Calculator\n(Zero-Loop Math)"]
+    end
+
+    subgraph SolanaRuntime ["Solana SPL Token-2022 & Settlement Engine"]
+        EuroMint["Institutional Euro Mint (EUROe / Token-2022)\n[Extensions: TransferHook, Metadata]"]
+        PoolVault["Pool Token Account (Vault)\n[PDA: 'vault_authority']"]
+        SupplierATA["Supplier Euro Token Account"]
+        InvestorATA["Investor Euro Token Account"]
+    end
+
+    subgraph Keepers ["Automated Keeper Settlement Loop"]
+        Crank["Automated Auction Liquidation Keeper\n(Off-chain Rust Worker)"]
+    end
+
+    %% Flow of Capital & Interactions
+    Investor -->|"1. Deposit EUR liquidity"| Pool
+    Pool -->|"2. Mint kEUR Receipt Shares"| InvestorATA
+    InvestorATA -.->|"Validate KYC state"| TransferHook
+
+    Supplier -->|"3. Submit verified B2B invoice"| InvoicePDA
+    Registry -->|"Verify EORI / LEI Credential"| InvoicePDA
+
+    InvoicePDA -->|"4. Calculate LTV & Discounted Factor"| MathEngine
+    MathEngine -->|"Return dynamic borrow rate"| Pool
+
+    Pool -->|"5. Drawdown liquidity CPI"| PoolVault
+    PoolVault -->|"Disburse Euro advance funds"| SupplierATA
+    SupplierATA -.->|"Enforce transfer hook"| TransferHook
+
+    Debtor -->|"6. Settle full invoice balance at maturity"| InvoicePDA
+    InvoicePDA -->|"7. Pay principal + accrued interest"| PoolVault
+    InvoicePDA -->|"8. Release residual escrow"| SupplierATA
+
+    Crank -->|"9. Trigger Dutch Auction on Default (maturity > grace_period)"| InvoicePDA
+    InvoicePDA -->|"10. Liquidate discounted invoice collateral"| PoolVault

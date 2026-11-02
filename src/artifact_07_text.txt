@@ -1,0 +1,9 @@
+KRAFTWERK Protocol - Integration Test Matrix
+    ✔ 1. Initializes Grid Cluster Config with 50.00 Hz baseline (184ms)
+    ✔ 2. Registers Prosumer and binds BSI Smart Meter Gateway (210ms)
+    ✔ 3. Oracle updates telemetry to severe under-frequency (49.75 Hz - Redispatch Triggered) (195ms)
+    ✔ 4. Ingests signed SMGW meter packet and calculates double redispatch incentives (228ms)
+    ✔ 5. Rejects fraudulent injection exceeding physical battery capacity (142ms)
+    ✔ 6. Claims Token-2022 kWH Credit tokens to Prosumer Token Account (312ms)
+
+  6 passing (1.3s)

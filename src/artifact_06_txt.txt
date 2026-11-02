@@ -1,0 +1,8 @@
+kraftwerk-protocol-qa-matrix
+    ✔ Initializes the German Balancing Market Subnet (TenneT 50Hz) (412ms)
+    ✔ Enrolls DER Battery Unit with Staked Performance Collateral (380ms)
+    ✔ Executes Valid Telemetry Ingestion & Payout via Ed25519 Precompile (490ms)
+    ✔ Detects Dispatch Deficit and Executes Collateral Slashing (430ms)
+    ✔ Rejects Unauthorized Telemetry with Forged Ed25519 Precompile (210ms)
+
+  5 passing (2s)

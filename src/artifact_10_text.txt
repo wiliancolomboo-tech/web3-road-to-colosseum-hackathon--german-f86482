@@ -1,0 +1,10 @@
+GridZero: Institutional VPP & Real-Time Balancing Engine
+    ✔ 1. Initializes global protocol configuration (421ms)
+    ✔ 2. Creates a regional balancing pool and funds vault escrow (612ms)
+    ✔ 3. Registers a hardware-authenticated BESS device (438ms)
+    ✔ 4. Processes injection dispatch and settles micropayment (1214ms)
+    ✔ 5. Rejects unauthorized meter signature (Replay/Spoof Protection) (88ms)
+    ✔ 6. Rejects non-monotonic / replay nonce (79ms)
+    ✔ 7. Enforces nominal power capacity ceiling invariant (1190ms)
+
+  7 passing (4.1s)

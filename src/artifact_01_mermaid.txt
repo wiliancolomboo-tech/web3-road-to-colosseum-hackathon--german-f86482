@@ -1,47 +1,58 @@
 flowchart TD
-    subgraph Edge_Devices["Edge Hardware Layer (Germany §14a EnWG Inverters & SMGW)"]
-        SMGW["Smart Meter Gateway / Inverter<br/>(Secure Enclave Ed25519)"]
-        PV["Rooftop Solar PV / Battery Storage"]
-        SMGW -->|1. Sign Telemetry (kWh, Freq, Timestamp)| PV
+    subgraph Edge_IoT_Layer [Edge IoT & DePIN Hardware]
+        MeterA[Smart Meter / Solar Inverter A - Producer]
+        MeterB[EV Charger / Industrial Load B - Consumer]
+        SE[Secure Enclave / TPM Chip]
     end
 
-    subgraph Solana_Runtime["Solana Cluster (Devnet / Mainnet-Beta)"]
-        subgraph Accounts_Layer["Account State & PDAs"]
-            GridNode["Grid Node PDA<br/>seeds=['grid-node', node_id]<br/>• Nominal Freq: 50.00 Hz<br/>• Balancing Pool Reserves"]
-            DeviceRegistry["Device PDA<br/>seeds=['device', owner_pubkey]<br/>• Stake Balance<br/>• Cumulative kWh Injected<br/>• Device Pubkey & Status"]
-            BalanceVault["Balancing Collateral Vault PDA<br/>seeds=['vault', node_id]"]
-            TokenMint["Euro-Stable SPL Token<br/>(e.g., EUROe / EURC)"]
+    subgraph Security_Gate [Hardware Attestation Gate]
+        SE -->|Ed25519 Signature of kWh Telemetry| EdVerify[Native Solana Ed25519 SigVerify Precompile]
+    end
+
+    subgraph Solana_Runtime [Solana Blockchain - Kraftwerk Program]
+        EdVerify -->|Verified Payload| Prog[Kraftwerk Settlement Engine]
+        
+        subgraph Account_States [Program Derived Addresses - PDAs]
+            Config[Global Config PDA: 'config']
+            GridPDA[Grid Substation Node PDA: 'grid_node' + grid_id]
+            MeterPDA_A[Producer Meter Registry PDA: 'meter' + pubkeyA]
+            MeterPDA_B[Consumer Meter Registry PDA: 'meter' + pubkeyB]
+            ChannelPDA[Bilateral Stream Channel PDA: 'channel' + A + B]
+            VaultPDA[Protocol Escrow Vault PDA: 'vault' + mint]
         end
 
-        subgraph KraftWerk_Engine["KraftWerk Program Engine (Anchor)"]
-            InitNode["initialize_grid_node()"]
-            RegisterDev["register_device()"]
-            CommitTelemetry["commit_energy_telemetry()"]
-            SettleClearing["settle_balancing_round()"]
-            SlashMalicious["slash_deviant_device()"]
+        subgraph Dynamic_Clearing [Automated Clearing Engine]
+            Curve[Piecewise Linear Congestion Pricing Curve]
+            Accrue[Continuous Bilateral Debt/Credit Accumulator]
         end
 
-        subgraph CPI_Boundary["Cross-Program Invocation (CPI)"]
-            SPL_Token_Prog["SPL Token Program<br/>(Token2022 / Standard)"]
-            Ed25519_Verify["Ed25519 Precompile Instruction<br/>Native Sysvar Verification"]
+        subgraph Token2022_CPI [SPL Token-2022 & Transfer Hook Layer]
+            MintEUR[EURk Stablecoin / Settlement Mint]
+            Hook[MiCA Compliance Transfer Hook Program]
+            MintREC[Tokenized Guarantee of Origin - EAC Mint]
         end
     end
 
-    subgraph Keepers_Aggregators["Oracles & Aggregators Layer"]
-        TSO_Relay["TSO / Aggregator Keeper Node<br/>(Reads 50Hertz/TenneT Telemetry)"]
+    subgraph Keepers_Oracles [Autonomous Keeper Loop]
+        TSO_Keeper[DSO/TSO Congestion Keeper Bot]
+        TSO_Keeper -->|Push Local Frequency & Grid Capacity Delta| Prog
     end
 
-    %% Interactions
-    SMGW -->|2. Send Signed Telemetry Transaction| Solana_Runtime
-    Solana_Runtime -->|Instruction 1| Ed25519_Verify
-    Ed25519_Verify -->|Sig OK| CommitTelemetry
-    CommitTelemetry -->|Update State| DeviceRegistry
-
-    TSO_Relay -->|3. Trigger Balancing Batch Settlement| SettleClearing
-    SettleClearing -->|Read Frequency Offset| GridNode
-    SettleClearing -->|Transfer EUROe Rewards| CPI_Boundary
-    CPI_Boundary -->|CPI Transfer| BalanceVault
-    BalanceVault -->|Payout| DeviceRegistry
-
-    SettleClearing -.->|Triggered if Injection < Promised| SlashMalicious
-    SlashMalicious -->|Slash Collateral| BalanceVault
+    %% Flow connections
+    MeterA -->|1. Register & Attest Identity| Prog
+    MeterB -->|1. Register & Open Channel| Prog
+    Prog -->|Derives & Validates| Config
+    Prog -->|Mutates| GridPDA
+    Prog -->|Mutates| MeterPDA_A
+    Prog -->|Mutates| MeterPDA_B
+    Prog -->|Updates Streaming Balances| ChannelPDA
+    
+    TSO_Keeper -.->|Rebalance Congestion Multiplier| GridPDA
+    GridPDA -->|Input Capacity Variables| Curve
+    Curve -->|Calculates Cleared Spot Rate| Accrue
+    
+    Accrue -->|Trigger Final Micro-Settlement| Prog
+    Prog -->|CPI Transfer Checked via Hook| VaultPDA
+    VaultPDA -->|Atomic Payout| MintEUR
+    Prog -->|CPI Mint Non-Fungible Green Certificate| MintREC
+    MintREC -->|Enforce Compliance Whitelist| Hook

@@ -6,204 +6,347 @@ import {
   createAccount,
   mintTo,
   getAccount,
+  TOKEN_2022_PROGRAM_ID,
 } from "@solana/spl-token";
-import { assert, expect } from "chai";
+import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
+import { expect } from "chai";
 
-describe("KraftWerk Decentralized Grid Settlement Engine Tests", () => {
+describe("KRAFTWERK Protocol E2E Verification Matrix", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
   const program = anchor.workspace.Kraftwerk as Program<Kraftwerk>;
+  const admin = (provider.wallet as anchor.Wallet).payer;
 
-  let euroeMint: anchor.web3.PublicKey;
-  let authority = provider.wallet as anchor.Wallet;
-  let prosumer = anchor.web3.Keypair.generate();
-  let hardwareKey = anchor.web3.Keypair.generate();
+  let settlementMint: PublicKey;
+  let escrowVaultPda: PublicKey;
+  let configPda: PublicKey;
 
-  const nodeId = "DE-TENNET-BAYERN-01";
-  let gridNodePda: anchor.web3.PublicKey;
-  let settlementVaultPda: anchor.web3.PublicKey;
-  let deviceRecordPda: anchor.web3.PublicKey;
-  let prosumerTokenAccount: anchor.web3.PublicKey;
+  const operator = Keypair.generate();
+  const producerOwner = Keypair.generate();
+  const producerDevice = Keypair.generate();
+  const consumerOwner = Keypair.generate();
+  const consumerDevice = Keypair.generate();
+  const feeTreasuryKeypair = Keypair.generate();
+
+  let feeTreasuryAta: PublicKey;
+  let consumerAta: PublicKey;
+  let producerAta: PublicKey;
+
+  const gridId = Array.from(Buffer.from("BERLIN_MITTE_01")); // 16-byte grid id
+  let gridNodePda: PublicKey;
+  let producerMeterPda: PublicKey;
+  let consumerMeterPda: PublicKey;
+
+  const channelId = new anchor.BN(42069);
+  let channelPda: PublicKey;
 
   before(async () => {
-    // 1. Airdrop prosumer wallet
-    const signature = await provider.connection.requestAirdrop(
-      prosumer.publicKey,
-      2 * anchor.web3.LAMPORTS_PER_SOL
-    );
-    await provider.connection.confirmTransaction(signature);
+    // 1. Airdrop SOL to participants
+    const fundAccounts = [operator, producerOwner, consumerOwner];
+    for (const acc of fundAccounts) {
+      const sig = await provider.connection.requestAirdrop(acc.publicKey, 5 * anchor.web3.LAMPORTS_PER_SOL);
+      await provider.connection.confirmTransaction(sig);
+    }
 
-    // 2. Create EUROe mock stablecoin mint
-    euroeMint = await createMint(
+    // 2. Deploy Mock Token-2022 Stablecoin (EURk - 6 Decimals)
+    settlementMint = await createMint(
       provider.connection,
-      authority.payer,
-      authority.publicKey,
+      admin,
+      admin.publicKey,
       null,
-      6
+      6,
+      Keypair.generate(),
+      undefined,
+      TOKEN_2022_PROGRAM_ID
     );
 
-    // 3. Derive PDAs
-    [gridNodePda] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("grid_node"), Buffer.from(nodeId)],
+    // 3. Derive Protocol PDAs
+    [configPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("config")],
       program.programId
     );
 
-    [settlementVaultPda] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("settlement_vault"), Buffer.from(nodeId)],
+    [escrowVaultPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("vault"), settlementMint.toBuffer()],
       program.programId
     );
 
-    [deviceRecordPda] = anchor.web3.PublicKey.findProgramAddressSync(
-      [
-        Buffer.from("device"),
-        prosumer.publicKey.toBuffer(),
-        gridNodePda.toBuffer(),
-      ],
+    [gridNodePda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("grid_node"), Buffer.from(gridId)],
       program.programId
     );
 
-    // 4. Create prosumer token balance
-    prosumerTokenAccount = await createAccount(
+    [producerMeterPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("meter"), producerDevice.publicKey.toBuffer()],
+      program.programId
+    );
+
+    [consumerMeterPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("meter"), consumerDevice.publicKey.toBuffer()],
+      program.programId
+    );
+
+    [channelPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("channel"), channelId.toArrayLike(Buffer, "le", 8)],
+      program.programId
+    );
+
+    // 4. Create Token Accounts
+    feeTreasuryAta = await createAccount(
       provider.connection,
-      prosumer,
-      euroeMint,
-      prosumer.publicKey
+      admin,
+      settlementMint,
+      feeTreasuryKeypair.publicKey,
+      undefined,
+      undefined,
+      TOKEN_2022_PROGRAM_ID
     );
-  });
 
-  it("Initializes a localized German Grid Balancing Node", async () => {
-    const baseRate = new anchor.BN(20_000_000); // 20 Euro Cents per kWh scaled by 1e6
+    consumerAta = await createAccount(
+      provider.connection,
+      consumerOwner,
+      settlementMint,
+      consumerOwner.publicKey,
+      undefined,
+      undefined,
+      TOKEN_2022_PROGRAM_ID
+    );
 
-    await program.methods
-      .initializeGridNode(nodeId, baseRate)
-      .accounts({
-        gridNode: gridNodePda,
-        settlementVault: settlementVaultPda,
-        settlementMint: euroeMint,
-        authority: authority.publicKey,
-        systemProgram: anchor.web3.SystemProgram.programId,
-        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
-      .rpc();
+    producerAta = await createAccount(
+      provider.connection,
+      producerOwner,
+      settlementMint,
+      producerOwner.publicKey,
+      undefined,
+      undefined,
+      TOKEN_2022_PROGRAM_ID
+    );
 
-    // Fund the settlement vault with 50,000 EUROe for liquidity
+    // 5. Mint 1,000 EURk ($1000.000000) to Consumer
     await mintTo(
       provider.connection,
-      authority.payer,
-      euroeMint,
-      settlementVaultPda,
-      authority.publicKey,
-      50_000_000_000
+      admin,
+      settlementMint,
+      consumerAta,
+      admin,
+      1_000_000_000,
+      [],
+      undefined,
+      TOKEN_2022_PROGRAM_ID
     );
-
-    const nodeAccount = await program.account.gridNode.fetch(gridNodePda);
-    expect(nodeAccount.nodeId).to.equal(nodeId);
-    expect(nodeAccount.currentFrequencyMhz).to.equal(50000); // 50.00 Hz
   });
 
-  it("Registers an edge residential battery device with stake collateral", async () => {
-    // Mint 500 EUROe collateral to prosumer
-    await mintTo(
+  it("Step 1: Initializes Global Protocol Configuration", async () => {
+    const protocolFeeBps = 100; // 1.00%
+    await program.methods
+      .initializeProtocol(protocolFeeBps, operator.publicKey)
+      .accounts({
+        config: configPda,
+        settlementMint: settlementMint,
+        admin: admin.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
+    const configAccount = await program.account.config.fetch(configPda);
+    expect(configAccount.admin.toBase58()).to.equal(admin.publicKey.toBase58());
+    expect(configAccount.protocolFeeBps).to.equal(100);
+    expect(configAccount.settlementMint.toBase58()).to.equal(settlementMint.toBase58());
+  });
+
+  it("Step 2: Registers Substation Grid Node with Dynamic Capacity", async () => {
+    const baseRatePerKwh = new anchor.BN(300_000); // 0.30 EUR per kWh
+    const maxCapacityKw = new anchor.BN(50_000); // 50 MW Substation capacity
+
+    await program.methods
+      .registerGridNode(gridId, baseRatePerKwh, maxCapacityKw)
+      .accounts({
+        grid_node: gridNodePda,
+        operator: operator.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([operator])
+      .rpc();
+
+    const gridNode = await program.account.gridNode.fetch(gridNodePda);
+    expect(gridNode.baseRatePerKwh.toNumber()).to.equal(300_000);
+    expect(gridNode.congestionMultiplierBps.toNumber()).to.equal(10_000); // 1.0x
+  });
+
+  it("Step 3: Registers Producer & Consumer Smart Meter PDAs", async () => {
+    // Register Producer Meter (e.g. 50kW Solar Roof)
+    await program.methods
+      .registerSmartMeter(producerDevice.publicKey, { producer: {} })
+      .accounts({
+        meterAccount: producerMeterPda,
+        gridNode: gridNodePda,
+        owner: producerOwner.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([producerOwner])
+      .rpc();
+
+    // Register Consumer Meter (e.g. EV Fleet Fast Charger)
+    await program.methods
+      .registerSmartMeter(consumerDevice.publicKey, { consumer: {} })
+      .accounts({
+        meterAccount: consumerMeterPda,
+        gridNode: gridNodePda,
+        owner: consumerOwner.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([consumerOwner])
+      .rpc();
+
+    const pMeter = await program.account.smartMeter.fetch(producerMeterPda);
+    const cMeter = await program.account.smartMeter.fetch(consumerMeterPda);
+
+    expect(pMeter.owner.toBase58()).to.equal(producerOwner.publicKey.toBase58());
+    expect(cMeter.owner.toBase58()).to.equal(consumerOwner.publicKey.toBase58());
+  });
+
+  it("Step 4: Opens Bilateral Micro-Settlement Channel with Vault Escrow", async () => {
+    const depositAmount = new anchor.BN(200_000_000); // 200.000000 EURk
+
+    // Create the Escrow Vault ATA owned by Config PDA
+    await createAccount(
       provider.connection,
-      authority.payer,
-      euroeMint,
-      prosumerTokenAccount,
-      authority.publicKey,
-      500_000_000
+      consumerOwner,
+      settlementMint,
+      configPda,
+      undefined,
+      undefined,
+      TOKEN_2022_PROGRAM_ID
     );
 
-    const maxWatts = new anchor.BN(15_000); // 15 kW inverter capacity
+    // Fetch config vault account
+    const configVaultAta = await anchor.utils.token.associatedAddress({
+      mint: settlementMint,
+      owner: configPda,
+    });
 
     await program.methods
-      .registerDevice(maxWatts, hardwareKey.publicKey)
+      .openStreamChannel(channelId, depositAmount)
       .accounts({
-        gridNode: gridNodePda,
-        deviceRecord: deviceRecordPda,
-        collateralAccount: prosumerTokenAccount,
-        owner: prosumer.publicKey,
-        systemProgram: anchor.web3.SystemProgram.programId,
+        streamChannel: channelPda,
+        producerMeter: producerMeterPda,
+        consumerMeter: consumerMeterPda,
+        escrowVault: configVaultAta,
+        consumerTokenAccount: consumerAta,
+        settlementMint: settlementMint,
+        consumerAuthority: consumerOwner.publicKey,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
       })
-      .signers([prosumer])
+      .signers([consumerOwner])
       .rpc();
 
-    const device = await program.account.deviceRecord.fetch(deviceRecordPda);
-    expect(device.owner.toBase58()).to.equal(prosumer.publicKey.toBase58());
-    expect(device.maxCapacityWatts.toNumber()).to.equal(15_000);
-    expect(device.isActive).to.be.true;
+    const channel = await program.account.streamChannel.fetch(channelPda);
+    expect(channel.escrowBalance.toNumber()).to.equal(200_000_000);
+    expect(channel.isClosed).to.be.false;
   });
 
-  it("Commits telemetry during grid under-frequency (49.92 Hz)", async () => {
-    const now = Math.floor(Date.now() / 1000);
-    const injectedEnergyMwh = new anchor.BN(5_000_000); // 5.0 kWh injected
-    const underFreqMhz = 49_920; // 49.92 Hz (severe drop, high demand for power)
+  it("Step 5: Simulates High-Frequency Meter Telemetry Tick Settlement", async () => {
+    const kwhDelta = new anchor.BN(150_000); // 150.000 kWh delivered
+    const currentTime = Math.floor(Date.now() / 1000);
+
+    const configVaultAta = await anchor.utils.token.associatedAddress({
+      mint: settlementMint,
+      owner: configPda,
+    });
+
+    const initialProducerBal = (await getAccount(provider.connection, producerAta, undefined, TOKEN_2022_PROGRAM_ID)).amount;
 
     await program.methods
-      .commitEnergyTelemetry(injectedEnergyMwh, underFreqMhz, new anchor.BN(now))
+      .settleMeterTick(kwhDelta, new anchor.BN(currentTime))
       .accounts({
+        config: configPda,
+        streamChannel: channelPda,
+        producerMeter: producerMeterPda,
+        consumerMeter: consumerMeterPda,
         gridNode: gridNodePda,
-        deviceRecord: deviceRecordPda,
-        signer: prosumer.publicKey,
+        escrowVault: configVaultAta,
+        producerTokenAccount: producerAta,
+        feeTreasury: feeTreasuryAta,
+        settlementMint: settlementMint,
+        telemetryAuthority: admin.publicKey,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
       })
-      .signers([prosumer])
       .rpc();
 
-    const device = await program.account.deviceRecord.fetch(deviceRecordPda);
-    expect(device.accumulatedUnsettledMwh.toNumber()).to.equal(5_000_000);
+    // Verification:
+    // Rate = 300,000 micro-EUR ($0.30). Multiplier = 10000 (1.0x).
+    // Total raw cost = (150,000 * 300,000) / 1,000,000 = 45,000,000 micro-EUR (45.00 EURk).
+    // Protocol Fee = 1% = 450,000 micro-EUR.
+    // Net Producer = 44,550,000 micro-EUR.
+    const updatedProducerBal = (await getAccount(provider.connection, producerAta, undefined, TOKEN_2022_PROGRAM_ID)).amount;
+    expect(Number(updatedProducerBal) - Number(initialProducerBal)).to.equal(44_550_000);
 
-    const node = await program.account.gridNode.fetch(gridNodePda);
-    expect(node.currentFrequencyMhz).to.equal(underFreqMhz);
+    const channel = await program.account.streamChannel.fetch(channelPda);
+    expect(channel.escrowBalance.toNumber()).to.equal(200_000_000 - 45_000_000);
+    expect(channel.totalSettledKwh.toNumber()).to.equal(150_000);
   });
 
-  it("Settles balancing round with dynamic scarcity pricing", async () => {
-    const preVaultBalance = (
-      await getAccount(provider.connection, settlementVaultPda)
-    ).amount;
+  it("Step 6: Prevents Malicious Replay / Stale Timestamp Exploit", async () => {
+    const kwhDelta = new anchor.BN(5_000);
+    const staleTime = Math.floor(Date.now() / 1000) - 600; // 10 minutes stale
 
-    await program.methods
-      .settleBalancingRound()
-      .accounts({
-        gridNode: gridNodePda,
-        deviceRecord: deviceRecordPda,
-        settlementVault: settlementVaultPda,
-        devicePayoutAccount: prosumerTokenAccount,
-        signer: prosumer.publicKey,
-        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-      })
-      .signers([prosumer])
-      .rpc();
+    const configVaultAta = await anchor.utils.token.associatedAddress({
+      mint: settlementMint,
+      owner: configPda,
+    });
 
-    const postVaultBalance = (
-      await getAccount(provider.connection, settlementVaultPda)
-    ).amount;
-    const postProsumerBalance = (
-      await getAccount(provider.connection, prosumerTokenAccount)
-    ).amount;
-
-    // Prosumer injected power during under-frequency: rewarded from the vault
-    expect(Number(postVaultBalance)).to.be.lessThan(Number(preVaultBalance));
-    expect(Number(postProsumerBalance)).to.be.greaterThan(500_000_000);
-
-    const device = await program.account.deviceRecord.fetch(deviceRecordPda);
-    expect(device.accumulatedUnsettledMwh.toNumber()).to.equal(0);
-  });
-
-  it("Rejects stale or future timestamp telemetry submissions", async () => {
-    const badTimestamp = new anchor.BN(Math.floor(Date.now() / 1000) - 600); // 10 mins old
     try {
       await program.methods
-        .commitEnergyTelemetry(new anchor.BN(100_000), 50000, badTimestamp)
+        .settleMeterTick(kwhDelta, new anchor.BN(staleTime))
         .accounts({
+          config: configPda,
+          streamChannel: channelPda,
+          producerMeter: producerMeterPda,
+          consumerMeter: consumerMeterPda,
           gridNode: gridNodePda,
-          deviceRecord: deviceRecordPda,
-          signer: prosumer.publicKey,
+          escrowVault: configVaultAta,
+          producerTokenAccount: producerAta,
+          feeTreasury: feeTreasuryAta,
+          settlementMint: settlementMint,
+          telemetryAuthority: admin.publicKey,
+          tokenProgram: TOKEN_2022_PROGRAM_ID,
         })
-        .signers([prosumer])
         .rpc();
-      assert.fail("Should have failed on stale timestamp");
+      expect.fail("Execution should fail due to stale telemetry");
     } catch (err: any) {
-      expect(err.error.errorCode.code).to.equal("StaleTelemetryTimestamp");
+      expect(err.error.errorCode.code).to.equal("TelemetryTimestampStale");
     }
+  });
+
+  it("Step 7: Closes Stream Channel and Returns Escrow Remainder", async () => {
+    const configVaultAta = await anchor.utils.token.associatedAddress({
+      mint: settlementMint,
+      owner: configPda,
+    });
+
+    const consumerBalBefore = (await getAccount(provider.connection, consumerAta, undefined, TOKEN_2022_PROGRAM_ID)).amount;
+
+    await program.methods
+      .closeStreamChannel()
+      .accounts({
+        config: configPda,
+        streamChannel: channelPda,
+        escrowVault: configVaultAta,
+        consumerTokenAccount: consumerAta,
+        settlementMint: settlementMint,
+        consumerAuthority: consumerOwner.publicKey,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+      })
+      .signers([consumerOwner])
+      .rpc();
+
+    const channel = await program.account.streamChannel.fetch(channelPda);
+    expect(channel.isClosed).to.be.true;
+    expect(channel.escrowBalance.toNumber()).to.equal(0);
+
+    const consumerBalAfter = (await getAccount(provider.connection, consumerAta, undefined, TOKEN_2022_PROGRAM_ID)).amount;
+    expect(Number(consumerBalAfter)).to.be.greaterThan(Number(consumerBalBefore));
   });
 });

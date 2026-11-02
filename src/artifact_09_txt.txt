@@ -1,0 +1,9 @@
+KraftWerk: Decentralized Virtual Power Plant Test Suite
+    ✔ 1. Initializes German Grid Balancing Config & Escrow Vault (420ms)
+    ✔ 2. Registers Residential BESS Inverter with Hardware Enclave Public Key (285ms)
+    ✔ 3. Publishes High-Frequency Intraday EPEX Price Tick (210ms)
+    ✔ 4. Discharges Battery, Verifies Hardware Signature via Ed25519 & Settles Instantly (340ms)
+    ✔ 5. Replay Attack Fails: Attempting to settle using same nonce (185ms)
+    ✔ 6. Trips Safety Circuit Breaker and Blocks Settlement (190ms)
+
+  6 passing (1.63s)

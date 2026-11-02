@@ -1,0 +1,14 @@
+[00:00 - 00:20] THE PROBLEM (Visual: Overhead drone shot of a German solar park transitioning to an outdated SAP settlement terminal)
+Narrator: "Germany's Energiewende is producing clean electrons faster than legacy finance can settle them. Small-to-medium solar and storage operators wait 45 to 90 days for utility reconciliation, choking their working capital while institutional capital sits on the sidelines craving transparent, green yield."
+
+[00:20 - 00:45] THE SOLUTION (Visual: High-res terminal showing Voltix architecture, Anchor tests passing, and Solana Explorer confirmation)
+Narrator: "Meet Voltix Protocol: Solana's first high-frequency decentralized debt engine for tokenized Power Purchase Agreements. Built during the Germany Ideathon for the global Colosseum Hackathon, Voltix connects IoT smart meters directly to SPL Token-2022 yield tranches on Solana, settling physical energy receivables sub-second."
+
+[00:45 - 01:15] LIVE DEMO EXECUTION (Visual: Split screen: IoT telemetry feeding 450 kWh ticks on the left; Solana transaction inspector verifying PDA escrow state updates on the right)
+Narrator: "Watch this: At tick zero, a 2.5 megawatt solar plant in Brandenburg streams cryptographically signed generation data. The Voltix program processes the meter tick in under 12,000 Compute Units. Instantaneously, our dynamic debt engine amortizes the investor's factored note, streaming settlement yield back to capital providers in real time."
+
+[01:15 - 01:40] INSTITUTIONAL COMPLIANCE & SAFETY (Visual: Code walkthrough of Token-2022 Transfer Hook and 125% over-collateralization mathematical proofs)
+Narrator: "Voltix is built for European institutional compliance. Using Token-2022 Transfer Hooks, only verified MiCA-compliant addresses can hold or trade these energy bonds. Furthermore, an algorithmic 125% over-collateralization guarantee ensures that if a producer under-generates, keeper cranks liquidate reserves automatically."
+
+[01:40 - 02:00] WHY VOLTIX WINS FIRST PLACE (Visual: Team summary, Git commit metrics, clear deployment roadmap to Solana Devnet and Mainnet-Beta)
+Narrator: "Voltix bridges physical European clean energy infrastructure with the world's most performant blockchain. We are not another toy DEX or memecoin—we are solving a multi-billion euro capital bottleneck with production-grade Rust code. Vote Voltix for 1st Place in the Colosseum Hackathon!"

@@ -1,0 +1,18 @@
++------------------------------+-------------------------------------+-------------------------------------------------------+
+| Attack Vector                | Vulnerability Profile               | Kraftwerk Protocol Defense Mechanism                  |
++------------------------------+-------------------------------------+-------------------------------------------------------+
+| Hardware Meter Spoofing      | Malicious prosumer submits          | Ed25519 Hardware enclave signature verification.      |
+|                              | arbitrary energy output to mint cash| Gateway public key must match registered MeterState.  |
++------------------------------+-------------------------------------+-------------------------------------------------------+
+| Monotonic Counter Rollback   | Prosumer resets internal counter to | Enforced invariant: cumulative_reading_wh >= total;   |
+|                              | repeatedly claim the same volume    | Non-monotonic values revert with error 6002.          |
++------------------------------+-------------------------------------+-------------------------------------------------------+
+| Time-Drift Sybil Attack      | Submitting historic or future-dated | Clock::get().unix_timestamp validation. Reading time   |
+|                              | packets during price anomalies       | restricted strictly between [-300s, +60s] window.     |
++------------------------------+-------------------------------------+-------------------------------------------------------+
+| Flash-Loan Draining          | Draining escrow liquidity pool      | Isolated bilateral escrow accounts; vault authority   |
+|                              | via manipulated instantaneous price | bound strictly to PDA with seeds: [energy-escrow, ...] |
++------------------------------+-------------------------------------+-------------------------------------------------------+
+| Reentrancy via CPI           | Callback manipulation during SPL    | Checks-Effects-Interactions: Internal energy inventory|
+|                              | token transfer invocation           | state is decremented before executing SPL transfers.  |
++------------------------------+-------------------------------------+-------------------------------------------------------+

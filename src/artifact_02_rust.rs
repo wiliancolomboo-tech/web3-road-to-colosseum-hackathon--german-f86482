@@ -1,442 +1,600 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
 
-declare_id!("KRFTh8rZtqV4sTcxR7Y1mJmK6e5L2o8t1V3X7Y2zPump");
+declare_id!("KFTWk4n1xV7eL8oX8n2iK1uP4QW5xR9pS3tM7aB2cDE");
 
-/// Precision scaling factor for fixed-point arithmetic (1e6)
-pub const FIXED_PRECISION: u128 = 1_000_000;
-/// Nominal German Grid Frequency in milliHertz (50.00 Hz = 50,000 mHz)
-pub const NOMINAL_FREQUENCY_MHZ: u32 = 50_000;
-/// Allowed standard frequency deadband in mHz (+/- 20 mHz)
-pub const FREQUENCY_DEADBAND_MHZ: u32 = 20;
-/// Slashed penalty fee points: 1000 = 10%
-pub const PENALTY_BPS: u64 = 1_000;
+pub const CONFIG_SEED: &[u8] = b"config";
+pub const GRID_NODE_SEED: &[u8] = b"grid_node";
+pub const METER_SEED: &[u8] = b"meter";
+pub const CHANNEL_SEED: &[u8] = b"channel";
+pub const VAULT_SEED: &[u8] = b"vault";
+
+pub const PRECISION: u128 = 1_000_000_000_000; // 1e12 fixed-point scale
+pub const MAX_BPS: u64 = 10_000;
 
 #[program]
 pub mod kraftwerk {
     use super::*;
 
-    /// Initialize a new regional grid node responsible for balancing a localized sector
-    pub fn initialize_grid_node(
-        ctx: Context<InitializeGridNode>,
-        node_id: String,
+    /// Initialize Global Protocol Configuration
+    pub fn initialize_protocol(
+        ctx: Context<InitializeProtocol>,
+        protocol_fee_bps: u16,
+        operator: Pubkey,
+    ) -> Result<()> {
+        require!(protocol_fee_bps <= 500, KraftwerkError::FeeExceedsCap); // Max 5%
+        let config = &mut ctx.accounts.config;
+        config.admin = ctx.accounts.admin.key();
+        config.operator = operator;
+        config.settlement_mint = ctx.accounts.settlement_mint.key();
+        config.protocol_fee_bps = protocol_fee_bps;
+        config.total_energy_settled_kwh = 0;
+        config.bump = ctx.bumps.config;
+        emit!(ProtocolInitializedEvent {
+            admin: config.admin,
+            settlement_mint: config.settlement_mint,
+            protocol_fee_bps,
+        });
+        Ok(())
+    }
+
+    /// Register a Regional Grid Node (Substation) with Dynamic Congestion Limits
+    pub fn register_grid_node(
+        ctx: Context<RegisterGridNode>,
+        grid_id: [u8; 16],
         base_rate_per_kwh: u64,
+        max_capacity_kw: u64,
     ) -> Result<()> {
-        require!(node_id.len() <= 32, KraftWerkError::NodeIdTooLong);
         let node = &mut ctx.accounts.grid_node;
-        node.authority = ctx.accounts.authority.key();
-        node.node_id = node_id;
+        node.grid_id = grid_id;
+        node.operator = ctx.accounts.operator.key();
         node.base_rate_per_kwh = base_rate_per_kwh;
-        node.active_devices = 0;
-        node.total_capacity_watts = 0;
-        node.last_cleared_timestamp = Clock::get()?.unix_timestamp;
-        node.current_frequency_mhz = NOMINAL_FREQUENCY_MHZ;
+        node.max_capacity_kw = max_capacity_kw;
+        node.current_load_kw = 0;
+        node.congestion_multiplier_bps = MAX_BPS; // 1.0x baseline
         node.bump = ctx.bumps.grid_node;
-        node.vault_bump = ctx.bumps.settlement_vault;
+
+        emit!(GridNodeRegisteredEvent {
+            grid_id,
+            base_rate_per_kwh,
+            max_capacity_kw,
+        });
         Ok(())
     }
 
-    /// Register an edge smart inverter or residential storage asset
-    pub fn register_device(
-        ctx: Context<RegisterDevice>,
-        max_capacity_watts: u64,
-        device_signing_pubkey: Pubkey,
+    /// Register Hardware Smart Meter Binding with Cryptographic Enclave Key
+    pub fn register_smart_meter(
+        ctx: Context<RegisterSmartMeter>,
+        device_pubkey: Pubkey,
+        meter_type: MeterType,
     ) -> Result<()> {
-        require!(max_capacity_watts > 0, KraftWerkError::InvalidCapacity);
-        
-        let device = &mut ctx.accounts.device_record;
-        device.owner = ctx.accounts.owner.key();
-        device.grid_node = ctx.accounts.grid_node.key();
-        device.hardware_pubkey = device_signing_pubkey;
-        device.max_capacity_watts = max_capacity_watts;
-        device.staked_collateral = ctx.accounts.collateral_account.amount;
-        device.accumulated_unsettled_mwh = 0;
-        device.last_telemetry_timestamp = Clock::get()?.unix_timestamp;
-        device.is_active = true;
-        device.bump = ctx.bumps.device_record;
+        let meter = &mut ctx.accounts.meter_account;
+        meter.owner = ctx.accounts.owner.key();
+        meter.device_pubkey = device_pubkey;
+        meter.grid_node = ctx.accounts.grid_node.key();
+        meter.meter_type = meter_type;
+        meter.total_kwh_accumulated = 0;
+        meter.is_active = true;
+        meter.bump = ctx.bumps.meter_account;
 
-        let node = &mut ctx.accounts.grid_node;
-        node.active_devices = node.active_devices.checked_add(1)
-            .ok_or(KraftWerkError::MathOverflow)?;
-        node.total_capacity_watts = node.total_capacity_watts.checked_add(max_capacity_watts)
-            .ok_or(KraftWerkError::MathOverflow)?;
-
+        emit!(MeterRegisteredEvent {
+            owner: meter.owner,
+            device_pubkey,
+            meter_type,
+        });
         Ok(())
     }
 
-    /// Ingest telemetry data. In production, this verifies that the prior instruction
-    /// was the native Ed25519 precompile instruction matching `device_record.hardware_pubkey`.
-    pub fn commit_energy_telemetry(
-        ctx: Context<CommitEnergyTelemetry>,
-        energy_delta_mwh: i64,
-        observed_frequency_mhz: u32,
-        timestamp: i64,
+    /// Open a Microgrid Streaming Channel between Producer & Consumer
+    pub fn open_stream_channel(
+        ctx: Context<OpenStreamChannel>,
+        channel_id: u64,
+        deposit_amount: u64,
     ) -> Result<()> {
-        let clock = Clock::get()?;
+        require!(deposit_amount > 0, KraftwerkError::ZeroDeposit);
+
+        let channel = &mut ctx.accounts.stream_channel;
+        channel.channel_id = channel_id;
+        channel.producer_meter = ctx.accounts.producer_meter.key();
+        channel.consumer_meter = ctx.accounts.consumer_meter.key();
+        channel.consumer_authority = ctx.accounts.consumer_authority.key();
+        channel.escrow_balance = deposit_amount;
+        channel.total_settled_kwh = 0;
+        channel.last_update_slot = Clock::get()?.slot;
+        channel.is_closed = false;
+        channel.bump = ctx.bumps.stream_channel;
+
+        // Transfer funds from consumer to protocol escrow vault
+        let cpi_accounts = TransferChecked {
+            from: ctx.accounts.consumer_token_account.to_account_info(),
+            mint: ctx.accounts.settlement_mint.to_account_info(),
+            to: ctx.accounts.escrow_vault.to_account_info(),
+            authority: ctx.accounts.consumer_authority.to_account_info(),
+        };
+        let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
+        token_interface::transfer_checked(cpi_ctx, deposit_amount, ctx.accounts.settlement_mint.decimals)?;
+
+        emit!(ChannelOpenedEvent {
+            channel_id,
+            deposit_amount,
+            consumer: channel.consumer_authority,
+        });
+        Ok(())
+    }
+
+    /// Process Meter Telemetry Tick & Continuously Settle Energy Micro-Transfers
+    pub fn settle_meter_tick(
+        ctx: Context<SettleMeterTick>,
+        kwh_delta: u64,
+        unix_timestamp: i64,
+    ) -> Result<()> {
+        let channel = &mut ctx.accounts.stream_channel;
+        require!(!channel.is_closed, KraftwerkError::ChannelClosed);
+
+        let producer_meter = &mut ctx.accounts.producer_meter;
+        let consumer_meter = &mut ctx.accounts.consumer_meter;
+        let grid_node = &ctx.accounts.grid_node;
+        let config = &ctx.accounts.config;
+
+        require!(producer_meter.is_active && consumer_meter.is_active, KraftwerkError::MeterInactive);
+        require!(producer_meter.meter_type == MeterType::Producer, KraftwerkError::InvalidMeterConfiguration);
+        require!(consumer_meter.meter_type == MeterType::Consumer, KraftwerkError::InvalidMeterConfiguration);
+
+        let current_clock = Clock::get()?;
         require!(
-            timestamp <= clock.unix_timestamp && timestamp >= clock.unix_timestamp - 300,
-            KraftWerkError::StaleTelemetryTimestamp
+            (current_clock.unix_timestamp - unix_timestamp).abs() < 120,
+            KraftwerkError::TelemetryTimestampStale
         );
 
-        let device = &mut ctx.accounts.device_record;
-        require!(device.is_active, KraftWerkError::DeviceDisabled);
-        
-        // Ensure device owner or registered keeper signed
-        require_keys_eq!(ctx.accounts.signer.key(), device.owner, KraftWerkError::Unauthorized);
+        // Price calculation: base_rate * (congestion_multiplier_bps / 10000)
+        let effective_rate = (grid_node.base_rate_per_kwh as u128)
+            .checked_mul(grid_node.congestion_multiplier_bps as u128)
+            .ok_or(KraftwerkError::MathOverflow)?
+            .checked_div(MAX_BPS as u128)
+            .ok_or(KraftwerkError::MathOverflow)?;
 
-        // Update accumulated unsettled energy (micro-watt hours)
-        device.accumulated_unsettled_mwh = device
-            .accumulated_unsettled_mwh
-            .checked_add(energy_delta_mwh)
-            .ok_or(KraftWerkError::MathOverflow)?;
-        device.last_telemetry_timestamp = timestamp;
+        // Settled value = kwh_delta * effective_rate
+        let raw_cost = (kwh_delta as u128)
+            .checked_mul(effective_rate)
+            .ok_or(KraftwerkError::MathOverflow)?
+            .checked_div(1_000_000) // Normalized for 6-decimal stablecoins
+            .ok_or(KraftwerkError::MathOverflow)? as u64;
 
-        // Update current localized grid frequency status
-        let node = &mut ctx.accounts.grid_node;
-        node.current_frequency_mhz = observed_frequency_mhz;
+        require!(channel.escrow_balance >= raw_cost, KraftwerkError::InsufficientChannelBalance);
 
-        emit!(TelemetryCommittedEvent {
-            device: device.key(),
-            energy_delta_mwh,
-            frequency_mhz: observed_frequency_mhz,
-            timestamp,
-        });
+        // Protocol fee deduction
+        let protocol_fee = (raw_cost as u128)
+            .checked_mul(config.protocol_fee_bps as u128)
+            .ok_or(KraftwerkError::MathOverflow)?
+            .checked_div(MAX_BPS as u128)
+            .ok_or(KraftwerkError::MathOverflow)? as u64;
+        let net_producer_payment = raw_cost.checked_sub(protocol_fee).ok_or(KraftwerkError::MathOverflow)?;
 
-        Ok(())
-    }
+        // State mutations
+        channel.escrow_balance = channel.escrow_balance.checked_sub(raw_cost).ok_or(KraftwerkError::MathOverflow)?;
+        channel.total_settled_kwh = channel.total_settled_kwh.checked_add(kwh_delta).ok_or(KraftwerkError::MathOverflow)?;
+        channel.last_update_slot = current_clock.slot;
 
-    /// Settle balancing rounds: pays prosumers delivering counter-frequency support
-    /// or slashes prosumers draining the grid during under-frequency events.
-    pub fn settle_balancing_round(ctx: Context<SettleBalancingRound>) -> Result<()> {
-        let node = &ctx.accounts.grid_node;
-        let device = &mut ctx.accounts.device_record;
-        require!(device.is_active, KraftWerkError::DeviceDisabled);
-        require!(device.accumulated_unsettled_mwh != 0, KraftWerkError::NoUnsettledEnergy);
+        producer_meter.total_kwh_accumulated = producer_meter
+            .total_kwh_accumulated
+            .checked_add(kwh_delta)
+            .ok_or(KraftwerkError::MathOverflow)?;
+        consumer_meter.total_kwh_accumulated = consumer_meter
+            .total_kwh_accumulated
+            .checked_add(kwh_delta)
+            .ok_or(KraftwerkError::MathOverflow)?;
 
-        // Dynamic pricing model:
-        // German Frequency Containment Reserve (FCR) Rule:
-        // If Frequency < 50.00 Hz (under-frequency), grid needs injection. Injection price surges.
-        // If Frequency > 50.00 Hz (over-frequency), grid needs absorption. Consumption is rewarded or subsidized.
-        let freq_delta: i64 = (node.current_frequency_mhz as i64) - (NOMINAL_FREQUENCY_MHZ as i64);
-        
-        let multiplier_scaled: i128 = if freq_delta.abs() <= (FREQUENCY_DEADBAND_MHZ as i64) {
-            FIXED_PRECISION as i128
-        } else {
-            // Price scale shifts dynamically up to +/- 50% based on deviation
-            let raw_multiplier = (FIXED_PRECISION as i128) - ((freq_delta as i128) * 10_000);
-            if raw_multiplier < (FIXED_PRECISION as i128 / 2) {
-                FIXED_PRECISION as i128 / 2
-            } else {
-                raw_multiplier
-            }
+        let config_bump = config.bump;
+        let signer_seeds: &[&[&[u8]]] = &[&[CONFIG_SEED, &[config_bump]]];
+
+        // Transfer payment to producer
+        let cpi_payout = TransferChecked {
+            from: ctx.accounts.escrow_vault.to_account_info(),
+            mint: ctx.accounts.settlement_mint.to_account_info(),
+            to: ctx.accounts.producer_token_account.to_account_info(),
+            authority: ctx.accounts.config.to_account_info(),
         };
+        let cpi_payout_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            cpi_payout,
+            signer_seeds,
+        );
+        token_interface::transfer_checked(cpi_payout_ctx, net_producer_payment, ctx.accounts.settlement_mint.decimals)?;
 
-        let base_rate = node.base_rate_per_kwh as i128;
-        let effective_rate_per_kwh = (base_rate * multiplier_scaled) / (FIXED_PRECISION as i128);
-
-        // Convert mWh (micro-watt hours) to kWh for settlement:
-        // 1 kWh = 1_000_000 mWh
-        let energy_kwh = (device.accumulated_unsettled_mwh as i128) / 1_000_000;
-        let settlement_amount = (energy_kwh * effective_rate_per_kwh) / (FIXED_PRECISION as i128);
-
-        let node_id_bytes = node.node_id.as_bytes();
-        let seeds = &[
-            b"settlement_vault".as_ref(),
-            node_id_bytes,
-            &[node.vault_bump],
-        ];
-        let signer_seeds = &[&seeds[..]];
-
-        if settlement_amount > 0 {
-            // Pay prosumer from vault
-            let payout_u64 = settlement_amount as u64;
-            token::transfer(
-                CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    Transfer {
-                        from: ctx.accounts.settlement_vault.to_account_info(),
-                        to: ctx.accounts.device_payout_account.to_account_info(),
-                        authority: ctx.accounts.settlement_vault.to_account_info(),
-                    },
-                    signer_seeds,
-                ),
-                payout_u64,
-            )?;
-        } else if settlement_amount < 0 {
-            // Energy absorbed or punitive draw; prosumer pays vault
-            let penalty_u64 = (-settlement_amount) as u64;
-            token::transfer(
-                CpiContext::new(
-                    ctx.accounts.token_program.to_account_info(),
-                    Transfer {
-                        from: ctx.accounts.device_payout_account.to_account_info(),
-                        to: ctx.accounts.settlement_vault.to_account_info(),
-                        authority: ctx.accounts.signer.to_account_info(),
-                    },
-                ),
-                penalty_u64,
-            )?;
+        // Transfer fee to protocol treasury
+        if protocol_fee > 0 {
+            let cpi_fee = TransferChecked {
+                from: ctx.accounts.escrow_vault.to_account_info(),
+                mint: ctx.accounts.settlement_mint.to_account_info(),
+                to: ctx.accounts.fee_treasury.to_account_info(),
+                authority: ctx.accounts.config.to_account_info(),
+            };
+            let cpi_fee_ctx = CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                cpi_fee,
+                signer_seeds,
+            );
+            token_interface::transfer_checked(cpi_fee_ctx, protocol_fee, ctx.accounts.settlement_mint.decimals)?;
         }
 
-        emit!(BalancingSettledEvent {
-            device: device.key(),
-            net_amount: settlement_amount,
-            cleared_mwh: device.accumulated_unsettled_mwh,
-            clearing_rate_scaled: effective_rate_per_kwh as u64,
+        emit!(TickSettledEvent {
+            channel_id: channel.channel_id,
+            kwh_delivered: kwh_delta,
+            cleared_payment: raw_cost,
+            net_to_producer: net_producer_payment,
+            protocol_fee,
         });
 
-        device.accumulated_unsettled_mwh = 0;
         Ok(())
     }
 
-    /// Slash device collateral in the event of Byzantine reporting or hardware spoofing
-    pub fn slash_deviant_device(
-        ctx: Context<SlashDeviantDevice>,
-        slash_amount: u64,
-        reason: String,
-    ) -> Result<()> {
-        let device = &mut ctx.accounts.device_record;
-        require!(slash_amount <= device.staked_collateral, KraftWerkError::InsufficientCollateral);
-        
-        device.staked_collateral = device.staked_collateral.checked_sub(slash_amount)
-            .ok_or(KraftWerkError::MathOverflow)?;
-        
-        if device.staked_collateral == 0 {
-            device.is_active = false;
+    /// Close Channel and Reclaim Unspent Escrow Balance
+    pub fn close_stream_channel(ctx: Context<CloseStreamChannel>) -> Result<()> {
+        let channel = &mut ctx.accounts.stream_channel;
+        let remaining_balance = channel.escrow_balance;
+
+        channel.is_closed = true;
+        channel.escrow_balance = 0;
+
+        if remaining_balance > 0 {
+            let config_bump = ctx.accounts.config.bump;
+            let signer_seeds: &[&[&[u8]]] = &[&[CONFIG_SEED, &[config_bump]]];
+
+            let cpi_refund = TransferChecked {
+                from: ctx.accounts.escrow_vault.to_account_info(),
+                mint: ctx.accounts.settlement_mint.to_account_info(),
+                to: ctx.accounts.consumer_token_account.to_account_info(),
+                authority: ctx.accounts.config.to_account_info(),
+            };
+            let cpi_ctx = CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                cpi_refund,
+                signer_seeds,
+            );
+            token_interface::transfer_checked(cpi_ctx, remaining_balance, ctx.accounts.settlement_mint.decimals)?;
         }
 
-        // Transfer slashed funds from device collateral to grid reserve
-        token::transfer(
-            CpiContext::new(
-                ctx.accounts.token_program.to_account_info(),
-                Transfer {
-                    from: ctx.accounts.device_collateral_account.to_account_info(),
-                    to: ctx.accounts.slashed_reserve_account.to_account_info(),
-                    authority: ctx.accounts.grid_authority.to_account_info(),
-                },
-            ),
-            slash_amount,
-        )?;
+        emit!(ChannelClosedEvent {
+            channel_id: channel.channel_id,
+            refunded_amount: remaining_balance,
+        });
 
-        emit!(DeviceSlashedEvent {
-            device: device.key(),
-            slashed_amount: slash_amount,
-            reason,
+        Ok(())
+    }
+
+    /// Update Regional Grid Congestion Multiplier (Keeper Loop)
+    pub fn update_grid_congestion(
+        ctx: Context<UpdateGridCongestion>,
+        current_load_kw: u64,
+        congestion_multiplier_bps: u64,
+    ) -> Result<()> {
+        require!(
+            congestion_multiplier_bps >= 5_000 && congestion_multiplier_bps <= 50_000,
+            KraftwerkError::CongestionMultiplierOutOfBounds
+        ); // 0.5x to 5.0x bounds
+
+        let grid_node = &mut ctx.accounts.grid_node;
+        grid_node.current_load_kw = current_load_kw;
+        grid_node.congestion_multiplier_bps = congestion_multiplier_bps;
+
+        emit!(GridCongestionUpdatedEvent {
+            grid_id: grid_node.grid_id,
+            current_load_kw,
+            congestion_multiplier_bps,
         });
 
         Ok(())
     }
 }
 
-// -------------------------------------------------------------------------
-// ACCOUNTS CONTEXT STRUCTS
-// -------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
+// ACCOUNT STRUCTS & VALIDATION
+// -----------------------------------------------------------------------------
 
 #[derive(Accounts)]
-#[instruction(node_id: String)]
-pub struct InitializeGridNode<'info> {
+pub fn initialize_protocol<'info>(ctx: Context<InitializeProtocol>) -> Result<()> {
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct InitializeProtocol<'info> {
     #[account(
         init,
-        payer = authority,
+        payer = admin,
+        space = 8 + Config::INIT_SPACE,
+        seeds = [CONFIG_SEED],
+        bump
+    )]
+    pub config: Account<'info, Config>,
+    pub settlement_mint: InterfaceAccount<'info, Mint>,
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(grid_id: [u8; 16])]
+pub struct RegisterGridNode<'info> {
+    #[account(
+        init,
+        payer = operator,
         space = 8 + GridNode::INIT_SPACE,
-        seeds = [b"grid_node", node_id.as_bytes()],
+        seeds = [GRID_NODE_SEED, grid_id.as_ref()],
         bump
     )]
     pub grid_node: Account<'info, GridNode>,
-
-    #[account(
-        init,
-        payer = authority,
-        seeds = [b"settlement_vault", node_id.as_bytes()],
-        bump,
-        token::mint = settlement_mint,
-        token::authority = settlement_vault
-    )]
-    pub settlement_vault: Account<'info, TokenAccount>,
-
-    pub settlement_mint: Account<'info, Mint>,
-
     #[account(mut)]
-    pub authority: Signer<'info>,
+    pub operator: Signer<'info>,
     pub system_program: Program<'info, System>,
-    pub token_program: Program<'info, Token>,
-    pub rent: Sysvar<'info, Rent>,
 }
 
 #[derive(Accounts)]
-pub struct RegisterDevice<'info> {
-    #[account(mut)]
-    pub grid_node: Account<'info, GridNode>,
-
+#[instruction(device_pubkey: Pubkey)]
+pub struct RegisterSmartMeter<'info> {
     #[account(
         init,
         payer = owner,
-        space = 8 + DeviceRecord::INIT_SPACE,
-        seeds = [b"device", owner.key().as_ref(), grid_node.key().as_ref()],
+        space = 8 + SmartMeter::INIT_SPACE,
+        seeds = [METER_SEED, device_pubkey.as_ref()],
         bump
     )]
-    pub device_record: Account<'info, DeviceRecord>,
-
-    #[account(
-        mut,
-        constraint = collateral_account.owner == owner.key() @ KraftWerkError::Unauthorized
-    )]
-    pub collateral_account: Account<'info, TokenAccount>,
-
+    pub meter_account: Account<'info, SmartMeter>,
+    pub grid_node: Account<'info, GridNode>,
     #[account(mut)]
     pub owner: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
-pub struct CommitEnergyTelemetry<'info> {
-    #[account(mut)]
-    pub grid_node: Account<'info, GridNode>,
-
+#[instruction(channel_id: u64)]
+pub struct OpenStreamChannel<'info> {
+    #[account(
+        init,
+        payer = consumer_authority,
+        space = 8 + StreamChannel::INIT_SPACE,
+        seeds = [CHANNEL_SEED, channel_id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub stream_channel: Account<'info, StreamChannel>,
+    pub producer_meter: Account<'info, SmartMeter>,
+    pub consumer_meter: Account<'info, SmartMeter>,
     #[account(
         mut,
-        seeds = [b"device", device_record.owner.as_ref(), grid_node.key().as_ref()],
-        bump = device_record.bump
+        seeds = [VAULT_SEED, settlement_mint.key().as_ref()],
+        bump
     )]
-    pub device_record: Account<'info, DeviceRecord>,
-
-    pub signer: Signer<'info>,
+    pub escrow_vault: InterfaceAccount<'info, TokenAccount>,
+    #[account(mut)]
+    pub consumer_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub settlement_mint: InterfaceAccount<'info, Mint>,
+    #[account(mut)]
+    pub consumer_authority: Signer<'info>,
+    pub token_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
-pub struct SettleBalancingRound<'info> {
+pub struct SettleMeterTick<'info> {
     #[account(
-        seeds = [b"grid_node", grid_node.node_id.as_bytes()],
+        seeds = [CONFIG_SEED],
+        bump = config.bump
+    )]
+    pub config: Account<'info, Config>,
+    #[account(
+        mut,
+        seeds = [CHANNEL_SEED, stream_channel.channel_id.to_le_bytes().as_ref()],
+        bump = stream_channel.bump
+    )]
+    pub stream_channel: Account<'info, StreamChannel>,
+    #[account(
+        mut,
+        constraint = producer_meter.key() == stream_channel.producer_meter @ KraftwerkError::MeterMismatch
+    )]
+    pub producer_meter: Account<'info, SmartMeter>,
+    #[account(
+        mut,
+        constraint = consumer_meter.key() == stream_channel.consumer_meter @ KraftwerkError::MeterMismatch
+    )]
+    pub consumer_meter: Account<'info, SmartMeter>,
+    #[account(
+        seeds = [GRID_NODE_SEED, grid_node.grid_id.as_ref()],
         bump = grid_node.bump
     )]
     pub grid_node: Account<'info, GridNode>,
-
     #[account(
         mut,
-        seeds = [b"device", device_record.owner.as_ref(), grid_node.key().as_ref()],
-        bump = device_record.bump
+        seeds = [VAULT_SEED, settlement_mint.key().as_ref()],
+        bump
     )]
-    pub device_record: Account<'info, DeviceRecord>,
-
-    #[account(
-        mut,
-        seeds = [b"settlement_vault", grid_node.node_id.as_bytes()],
-        bump = grid_node.vault_bump
-    )]
-    pub settlement_vault: Account<'info, TokenAccount>,
-
+    pub escrow_vault: InterfaceAccount<'info, TokenAccount>,
     #[account(mut)]
-    pub device_payout_account: Account<'info, TokenAccount>,
-
-    pub signer: Signer<'info>,
-    pub token_program: Program<'info, Token>,
+    pub producer_token_account: InterfaceAccount<'info, TokenAccount>,
+    #[account(mut)]
+    pub fee_treasury: InterfaceAccount<'info, TokenAccount>,
+    #[account(address = config.settlement_mint @ KraftwerkError::InvalidSettlementMint)]
+    pub settlement_mint: InterfaceAccount<'info, Mint>,
+    /// Hardware attestation signature authority or keeper signer
+    pub telemetry_authority: Signer<'info>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 #[derive(Accounts)]
-pub struct SlashDeviantDevice<'info> {
-    pub grid_authority: Signer<'info>,
-
+pub struct CloseStreamChannel<'info> {
     #[account(
-        has_one = grid_authority @ KraftWerkError::Unauthorized
+        seeds = [CONFIG_SEED],
+        bump = config.bump
     )]
-    pub grid_node: Account<'info, GridNode>,
-
+    pub config: Account<'info, Config>,
     #[account(
         mut,
-        seeds = [b"device", device_record.owner.as_ref(), grid_node.key().as_ref()],
-        bump = device_record.bump
+        seeds = [CHANNEL_SEED, stream_channel.channel_id.to_le_bytes().as_ref()],
+        bump = stream_channel.bump,
+        constraint = stream_channel.consumer_authority == consumer_authority.key() @ KraftwerkError::Unauthorized
     )]
-    pub device_record: Account<'info, DeviceRecord>,
-
+    pub stream_channel: Account<'info, StreamChannel>,
+    #[account(
+        mut,
+        seeds = [VAULT_SEED, settlement_mint.key().as_ref()],
+        bump
+    )]
+    pub escrow_vault: InterfaceAccount<'info, TokenAccount>,
     #[account(mut)]
-    pub device_collateral_account: Account<'info, TokenAccount>,
-
-    #[account(mut)]
-    pub slashed_reserve_account: Account<'info, TokenAccount>,
-
-    pub token_program: Program<'info, Token>,
+    pub consumer_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub settlement_mint: InterfaceAccount<'info, Mint>,
+    pub consumer_authority: Signer<'info>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
-// -------------------------------------------------------------------------
-// STATE STRUCTS
-// -------------------------------------------------------------------------
+#[derive(Accounts)]
+pub struct UpdateGridCongestion<'info> {
+    #[account(
+        mut,
+        seeds = [GRID_NODE_SEED, grid_node.grid_id.as_ref()],
+        bump = grid_node.bump,
+        constraint = grid_node.operator == operator.key() @ KraftwerkError::Unauthorized
+    )]
+    pub grid_node: Account<'info, GridNode>,
+    pub operator: Signer<'info>,
+}
+
+// -----------------------------------------------------------------------------
+// STATE SCHEMAS
+// -----------------------------------------------------------------------------
+
+#[account]
+#[derive(InitSpace)]
+pub struct Config {
+    pub admin: Pubkey,
+    pub operator: Pubkey,
+    pub settlement_mint: Pubkey,
+    pub total_energy_settled_kwh: u64,
+    pub protocol_fee_bps: u16,
+    pub bump: u8,
+}
 
 #[account]
 #[derive(InitSpace)]
 pub struct GridNode {
-    pub authority: Pubkey,         // 32
-    #[max_len(32)]
-    pub node_id: String,           // 4 + 32
-    pub base_rate_per_kwh: u64,    // 8 (Euro cents with 1e6 precision)
-    pub active_devices: u32,       // 4
-    pub total_capacity_watts: u64, // 8
-    pub last_cleared_timestamp: i64,// 8
-    pub current_frequency_mhz: u32,// 4
-    pub bump: u8,                  // 1
-    pub vault_bump: u8,            // 1
+    pub grid_id: [u8; 16],
+    pub operator: Pubkey,
+    pub base_rate_per_kwh: u64,       // In micro-units (e.g., 300_000 = $0.30/kWh)
+    pub max_capacity_kw: u64,
+    pub current_load_kw: u64,
+    pub congestion_multiplier_bps: u64, // 10000 = 1.0x
+    pub bump: u8,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
+pub enum MeterType {
+    Producer,
+    Consumer,
+    Storage,
 }
 
 #[account]
 #[derive(InitSpace)]
-pub struct DeviceRecord {
-    pub owner: Pubkey,                     // 32
-    pub grid_node: Pubkey,                 // 32
-    pub hardware_pubkey: Pubkey,           // 32 (Ed25519 SMGW onboard key)
-    pub max_capacity_watts: u64,           // 8
-    pub staked_collateral: u64,            // 8
-    pub accumulated_unsettled_mwh: i64,    // 8 (Signed micro-watt-hours)
-    pub last_telemetry_timestamp: i64,     // 8
-    pub is_active: bool,                   // 1
-    pub bump: u8,                          // 1
+pub struct SmartMeter {
+    pub owner: Pubkey,
+    pub device_pubkey: Pubkey,
+    pub grid_node: Pubkey,
+    pub meter_type: MeterType,
+    pub total_kwh_accumulated: u64,
+    pub is_active: bool,
+    pub bump: u8,
 }
 
-// -------------------------------------------------------------------------
-// EVENTS
-// -------------------------------------------------------------------------
+#[account]
+#[derive(InitSpace)]
+pub struct StreamChannel {
+    pub channel_id: u64,
+    pub producer_meter: Pubkey,
+    pub consumer_meter: Pubkey,
+    pub consumer_authority: Pubkey,
+    pub escrow_balance: u64,
+    pub total_settled_kwh: u64,
+    pub last_update_slot: u64,
+    pub is_closed: bool,
+    pub bump: u8,
+}
+
+// -----------------------------------------------------------------------------
+// EVENTS & ERRORS
+// -----------------------------------------------------------------------------
 
 #[event]
-pub struct TelemetryCommittedEvent {
-    pub device: Pubkey,
-    pub energy_delta_mwh: i64,
-    pub frequency_mhz: u32,
-    pub timestamp: i64,
+pub struct ProtocolInitializedEvent {
+    pub admin: Pubkey,
+    pub settlement_mint: Pubkey,
+    pub protocol_fee_bps: u16,
 }
 
 #[event]
-pub struct BalancingSettledEvent {
-    pub device: Pubkey,
-    pub net_amount: i128,
-    pub cleared_mwh: i64,
-    pub clearing_rate_scaled: u64,
+pub struct GridNodeRegisteredEvent {
+    pub grid_id: [u8; 16],
+    pub base_rate_per_kwh: u64,
+    pub max_capacity_kw: u64,
 }
 
 #[event]
-pub struct DeviceSlashedEvent {
-    pub device: Pubkey,
-    pub slashed_amount: u64,
-    pub reason: String,
+pub struct MeterRegisteredEvent {
+    pub owner: Pubkey,
+    pub device_pubkey: Pubkey,
+    pub meter_type: MeterType,
 }
 
-// -------------------------------------------------------------------------
-// ERRORS
-// -------------------------------------------------------------------------
+#[event]
+pub struct ChannelOpenedEvent {
+    pub channel_id: u64,
+    pub deposit_amount: u64,
+    pub consumer: Pubkey,
+}
+
+#[event]
+pub struct TickSettledEvent {
+    pub channel_id: u64,
+    pub kwh_delivered: u64,
+    pub cleared_payment: u64,
+    pub net_to_producer: u64,
+    pub protocol_fee: u64,
+}
+
+#[event]
+pub struct ChannelClosedEvent {
+    pub channel_id: u64,
+    pub refunded_amount: u64,
+}
+
+#[event]
+pub struct GridCongestionUpdatedEvent {
+    pub grid_id: [u8; 16],
+    pub current_load_kw: u64,
+    pub congestion_multiplier_bps: u64,
+}
 
 #[error_code]
-pub enum KraftWerkError {
-    #[msg("Node identifier exceeds maximum length of 32 characters.")]
-    NodeIdTooLong,
-    #[msg("Max capacity in watts must be greater than zero.")]
-    InvalidCapacity,
-    #[msg("Arithmetic overflow occurred during computation.")]
+pub enum KraftwerkError {
+    #[msg("Protocol fee exceeds maximum allowed percentage.")]
+    FeeExceedsCap,
+    #[msg("Zero deposit is not permitted when opening a stream channel.")]
+    ZeroDeposit,
+    #[msg("The specified streaming channel has already been closed.")]
+    ChannelClosed,
+    #[msg("Smart meter account is marked inactive.")]
+    MeterInactive,
+    #[msg("Invalid meter configuration for trade direction.")]
+    InvalidMeterConfiguration,
+    #[msg("Hardware meter telemetry timestamp is outside allowable skew.")]
+    TelemetryTimestampStale,
+    #[msg("Escrow account contains insufficient balance to clear tick.")]
+    InsufficientChannelBalance,
+    #[msg("Math calculation caused an arithmetic overflow/underflow.")]
     MathOverflow,
-    #[msg("Telemetry timestamp is stale or from the future.")]
-    StaleTelemetryTimestamp,
-    #[msg("Device is disabled or slashed.")]
-    DeviceDisabled,
-    #[msg("Signer is not authorized for this operation.")]
+    #[msg("Smart meter does not match registered channel parties.")]
+    MeterMismatch,
+    #[msg("Unauthorized execution attempt.")]
     Unauthorized,
-    #[msg("Device has no unsettled energy.")]
-    NoUnsettledEnergy,
-    #[msg("Requested slash amount exceeds available staked collateral.")]
-    InsufficientCollateral,
+    #[msg("Invalid settlement mint address provided.")]
+    InvalidSettlementMint,
+    #[msg("Grid congestion multiplier outside safety bounds [5000, 50000].")]
+    CongestionMultiplierOutOfBounds,
 }

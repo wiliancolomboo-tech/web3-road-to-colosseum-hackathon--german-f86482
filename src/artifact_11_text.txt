@@ -1,0 +1,8 @@
+Strom Protocol: Factoring & Liquidity Engine Tests
+    ✔ Initializes the factor liquidity pool with valid parameters (425ms)
+    ✔ Allows Liquidity Providers to deposit capital (389ms)
+    ✔ Executes zk-Invoice commitment tokenization and dynamic advance borrow (612ms)
+    ✔ Allows debtor to settle invoice at maturity with profit generation (740ms)
+    ✔ Rejects duplicate invoice commitments (Double-factoring exploit protection) (310ms)
+
+  5 passing (3s)

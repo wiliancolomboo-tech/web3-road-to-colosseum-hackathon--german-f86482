@@ -1,0 +1,8 @@
+SolKredit: Institutional RWA Credit Primitive
+    ✔ 1. Initializes Compliant Dual-Tranche Pool (1284ms)
+    ✔ 2. Registers MiCA/BaFin Regulatory Whitelist for Institutional Depositors (842ms)
+    ✔ 3. Executes Senior & Junior Capital Deposits (1530ms)
+    ✔ 4. SME Originates Debt Note & Executes Drawdown (1390ms)
+    ✔ 5. Repayment Lifecycle with Precise Fixed-Point Interest Accrual (1102ms)
+
+  5 passing (6s)

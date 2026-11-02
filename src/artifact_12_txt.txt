@@ -1,0 +1,8 @@
+KRAFTWERK Protocol Test Suite
+    ✔ 1. Initializes KRAFTWERK Protocol Global Registry & Certificate Mint (421ms)
+    ✔ 2. Registers Substation Grid Zone with Dynamic Baseline LMP (388ms)
+    ✔ 3. Registers Smart Meter Gateway tied to Hardware HSM Public Key (312ms)
+    ✔ 4. Settles Telemetry Packet with Cryptographic Ed25519 Hardware Verification (495ms)
+    ✔ 5. Rejects Spoofed Telemetry with Invalid Signature via Introspection (278ms)
+
+  5 passing (2s)

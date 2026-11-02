@@ -1,0 +1,10 @@
++----------------------------------------------------------------------------------------------------+
+|                                    KREIS VALUE ARCHITECTURE                                        |
++------------------------------------+----------------------------------+----------------------------+
+| Traditional EU Factoring (Euler/GmbH) | Standard EVM DeFi Credit Pools   | KREIS Protocol on Solana   |
++------------------------------------+----------------------------------+----------------------------+
+| 30 to 90-day settlement latency    | High gas ($12-$45/drawdown)      | 400ms finality             |
+| Manual PDF notary & KYC checks     | Pseudonymous (MiCA Non-Compliant)| Token-2022 Transfer Hook   |
+| Discontinuous monthly interest     | Discrete block-time compounding  | Continuous second-rate math|
+| 3.50% - 7.00% operational friction | MEV-vulnerable oracle updates    | Single-slot execution <45k |
++------------------------------------+----------------------------------+----------------------------+

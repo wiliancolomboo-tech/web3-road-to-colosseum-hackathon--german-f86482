@@ -1,0 +1,8 @@
+KRAFTWERK: DePIN VPP & Energy Settlement Engine
+    ✔ 1. Successfully initializes a German Grid Transformer Node (420ms)
+    ✔ 2. Registers Prosumer Hardware Smart Meter with cryptographic key bind (380ms)
+    ✔ 3. Executes complete telemetry settlement with valid Ed25519 attestation (510ms)
+    ✔ 4. Security Guard: Rejects forged signature or tampered telemetry (210ms)
+    ✔ 5. Security Guard: Enforces physical discharge capacity limits (195ms)
+
+  5 passing (2s)

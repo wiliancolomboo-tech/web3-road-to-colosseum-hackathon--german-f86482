@@ -1,0 +1,8 @@
+stromx - Virtual Power Plant Micro-Settlement Engine
+    ✔ 1. Initializes the Grid Cluster and Escrow Vault successfully (420ms)
+    ✔ 2. Registers a verified Smart Meter under the active cluster (180ms)
+    ✔ 3. Executes streaming micro-settlement for valid frequency & energy telemetry (240ms)
+    ✔ 4. Fails settlement if grid frequency exceeds statutory emergency tolerance (Fault Protection) (85ms)
+    ✔ 5. Allows cluster operator to slash a rogue meter and remove it from active count (195ms)
+
+  5 passing (1.12s)
