@@ -143,7 +143,7 @@ pub mut kraftwerk {
 
         // Security: Introspect Instruction Sysvar to assert that an Ed25519Program verification
         // instruction immediately preceded this instruction in the same transaction.
-        verify_hardware_signature_instruction(
+        verify_hardware_test_000000000000000000000000(
             &ctx.accounts.instructions_sysvar,
             &device.hardware_pubkey,
             watt_hours_delta,
@@ -242,7 +242,7 @@ pub mut kraftwerk {
 // Telemetry Instruction Introspection
 // -----------------------------------------------------------------------------
 
-fn verify_hardware_signature_instruction(
+fn verify_hardware_test_000000000000000000000000(
     instructions_sysvar: &AccountInfo,
     expected_hardware_pubkey: &[u8; 32],
     wh_delta: u64,
